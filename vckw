@@ -14,12 +14,12 @@ cmu=0.09;
 tke=0;
 sigmak=1;
 kB=0;
-B=400;               % Breite der Ems bei Jemgum
+B=400;              % Breite der Ems bei Jemgum
 
-dz=0.05;         % Spatial Discretization
-theta=1;       % Crank-Nicolson-Factor
-h=7.309;        %  boundary layer height
-%z=[0:dz:h]'; % mesh
+dz=0.05;            % Spatial Discretization
+theta=1;            % Crank-Nicolson-Factor
+h=7.309;            % boundary layer height
+%z=[0:dz:h]';       % mesh
 
 hend=h-mod(h,dz);
 j=hend/dz;
@@ -35,7 +35,7 @@ else %falls h kein Vielfaches von dz ist
     z(i+1)=h;  %Hier letzter Knoten
 end
 
-N=length(z);    % Node number
+N=length(z);         % Node number
 d=100e-6;
 rhos=2650;
 rho=1000;
@@ -239,7 +239,7 @@ for k=1:NT
     
     A=M-theta*Dtke;
     
-    % Abspeichern von Inhomogenit�ten auf der Diagonalen
+    % Abspeichern von Inhomogenitäten auf der Diagonalen
     for i=1:L+1
         A(i,i)=A(i,i)-dt*theta*(G(i)-cmu*omega(i));
     end
