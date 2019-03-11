@@ -1,0 +1,448 @@
+function vc1D
+clear all
+dbstop if error
+omegaJ=1.405e-4;
+TM2=2*pi/omegaJ;
+NT = 10000;         % Number of time steps
+dt=ceil(3*TM2/NT); % Time Step
+J0=1e-5;
+JNull=-J0/2.3;% Neigung des Bodens
+phi=pi/2; % Phasenverschiebung zwischen Wasserstand und Neigung
+kappa=0.41; % Ab hier Konstanten für k-Gleichung
+z0=6.8e-5;
+cmu=0.09;
+tke=0;
+sigmak=1;
+kB=0;
+B=400; % Breite der Ems bei Jemgum
+
+dz=0.05;         % Spatial Discretization
+theta=1;       % Crank-Nicolson-Factor
+h=7.309;        %  boundary layer height
+%z=[0:dz:h]'; % mesh
+
+hend=h-mod(h,dz);
+j=hend/dz;
+z(1)=0;
+if hend==h %falls h ein Vielfaches von dz ist
+    for i=2:j+1
+        z(i)=dz*(i-1);
+    end
+else %falls h kein Vielfaches von dz ist
+    for i=2:j+1
+        z(i)=dz*(i-1);
+    end
+    z(i+1)=h;  %Hier letzter Knoten
+end
+
+N=length(z);    % Node number
+d=100e-6;
+rhos=2650;
+rho=1000;
+nu=1e-6;
+g=9.81;
+wc0=-g/18/nu*(rhos-rho)/rho*d^2*ones(N,1);
+c50=250;
+
+% Initial conditions, Matrizengrößen für den 1. Zeitschritt müssen passen
+hakt=h-1.559+1.5*sin(omegaJ*dt)+0.2*1.5*sin(2*omegaJ*(dt-pi/4))+0.1*1.5*sin(3*omegaJ*(dt+pi/4));
+L=floor(hakt/dz)+1;
+v=zeros(L+1);
+c=200.*ones(L+1,1);
+D=zeros(L+1,L+1);
+v=zeros(L+1,L+1);
+C=zeros(L+1,L+1);
+Dc=zeros(L+1,L+1);
+
+sigmaom=0.5; %Ab hier w-Gleichung
+cmn1=5/9;
+cmn2=3/40;
+omegaS=1.2; % Anfangsrandwert
+omega=zeros(L+1,1);
+nut=zeros(L+1,1);
+
+%% Time loop
+for k=1:NT
+    k;
+    
+    % Aktueller Wasserstand (m)
+    hakt=h-1.559+1.5*sin(omegaJ*dt*k)+0.2*1.5*sin(2*omegaJ*(dt*k-pi/4))+0.1*1.5*sin(3*omegaJ*(dt*k+pi/4));
+    %  hakt=h;
+    
+    %  L=letzter Knoten des aequidistanten Gitters
+    L=floor(hakt/dz);
+          
+    hplot(k)=hakt; %Wasserstand über Zeit speichern   
+    %Abstand zwischen der Wasseroberflaeche und dem letzten aequidistanten Knoten
+    dz_neu=hakt-L*dz;
+    %Schalter, damit dz_neu nicht 0 wird und nicht durch 0 geteilt werden
+    %muss
+    dz_neu=max(dz_neu,0.001);
+    %Anzahl der tatsächlichen Knoten
+    L=L+1;
+    z(L+1)=z(L)+dz_neu;
+    % Begrenzen der Matrizen auf die aktuelle Größe
+    if k>1
+        l(1)=N-1; % wenn Wasserstand sinkt
+        l(k)=L;
+        p(k)=l(k-1);
+        if l(k)<p(k)
+            D=D(1:L+1,1:L+1);
+            v=v(1:L+1,1:L+1);
+            C=C(1:L+1,1:L+1);
+            Dc=Dc(1:L+1,1:L+1);
+            c=c(1:L+1);
+            Pk=Pk(1:L+1);
+            omega=omega(1:L+1,1:L+1);
+            tke=tke(1:L+1,1:L+1);
+           else if l(k)>p(k)  % wenn Wasserstand wieder steigt
+                
+                v(L+1,:)=v(L,:);
+                v(:,L+1)=v(:,L);
+                c(L+1,:)=c(L,:);
+                Pk(1,L+1)=Pk(1,L);
+                tke(L+1,:)=tke(L,:);
+                tke(:,L+1)=tke(:,L);
+                omega(L+1,:)=omega(L,:);
+                omega(:,L+1)=omega(:,L);
+            end
+        end
+    end
+    
+    % Schubspannungsgeschwindigkeit
+    J=JNull+J0*sin((omegaJ*k*dt)+phi);
+    Jplot(k)=J;
+    ustar=sqrt(g*abs(J)*hakt);
+    ks=3*d; ksp=ustar*ks/nu(1); Sr=2500/ksp^2;
+    omegaB=max(Sr*ustar^2/nu(1),10);
+    
+    %% Konsolidierungsmodell
+    A=4e8;
+    B=7.5;
+    phis=c/rhos;
+    sigmas=A*phis.^B;
+    
+    kf=1e-4; % Durchlässigkeit
+    for i=1:L+1
+        wcb=kf*(1-phis(i))*phis(i)*(1-rhos/rho); % Bodenabsetzung
+        wc(i)=0.5*(1-tanh(10*(c(i)/c50-1)))*(wc0(i)-wcb)+wcb;  % Übergang
+        Kr=kf*(1-phis(i))/rho/g*sigmas(i) ;    % Bodenviskosität
+        Kt=0.41*ustar*z(i)*max((1-z(i)/hakt),0) ;        % Turbulent diffusivity
+        K(i)=0.5*(1-tanh(10*(c(i)/c50-1)))*(Kt-Kr)+Kr ; % Übergang
+    end
+    
+  
+    %% Viskositaetsmodell
+    dotgamma(1)=(v(2)-v(1))/(z(2)-z(1));
+    for i=2:L
+        dotgamma(i)=(v(i+1)-v(i-1))/2/(z(i+1)-z(i));
+    end
+    dotgamma(L+1)=(v(L+1)-v(L))/(z(L+1)-z(L));
+    dotgamma=max(dotgamma,0.00001);
+    tauy=9000*phis.^4;
+    rhob=phis*rhos+(1-phis)*rho;
+    
+    
+    for i=1:L+1
+        
+        mur(i)=tauy(i)/dotgamma(i)+0.001*exp(20.92*phis(i));
+        nur(i)=mur(i)/rhob(i);
+        % Turbulente Viskosität
+        nu0(i)=0.41*ustar*z(i)*max(0,(1-z(i)/hakt));
+        % Übergang zur rheologischen Viskosität
+        nu(i)=0.5*(1-tanh(5*(c(i)/c50-1)))*(nu0(i)-nur(i))+nur(i);
+    end
+    nur=nur(1:L+1);
+    nu=nu(1:L+1);
+    nu0=nu0(1:L+1);
+    
+    % Massenmatrix
+    M=diag(ones(L+1,1));                  % Massenmatrix
+    
+    % Viskositätsmatrix
+    for i=2:L
+        D(i,i)=-((nu(i-1)+nu(i))*dt/((z(i)-z(i-1))*((z(i+1)-z(i-1))))+(nu(i)+nu(i+1))*dt/((z(i+1)-z(i))*((z(i+1)-z(i-1)))));
+    end
+    
+    for i=2:L-1
+        D(i,i+1)=(nu(i)+nu(i+1))*dt/((z(i+1)-z(i))*(z(i+1)-z(i-1)));
+        D(i+1,i)=(nu(i+1)+nu(i))*dt/((z(i+1)-z(i))*(z(i+2)-z(i)));
+    end
+    D(L,L+1)=(nu(L)+nu(L+1))*dt/((z(L+1)-z(L))*(z(L+1)-z(L-1)));
+    D(L+1,L)=0.5*(nu(L+1)+nu(L))*dt/((z(L+1)-z(L))^2);
+    D(1,:)=0;  % Homogene Dirichlet-RB am Boden
+    D(1,2)=dt/(z(3)-z(1))*(nu(1)+nu(2))/(z(2)-z(1));
+    
+    % Homogene Neumann RB am Rand der Grenzschicht
+    D(L+1,L+1)=-0.5*(nu(L+1)+nu(L))*dt/((z(L+1)-z(L))^2);
+    % Neumann-RB am ersten und letzten Knoten
+    D(1,1)=-0.5*(nu(1)+nu(2))*dt/((z(2)-z(1))^2);
+    
+    
+    
+    %% Physik des k-Modells
+    Pk(1)=nu(1)*((v(2)-v(1))/(z(2)-z(1)))^2;
+    for i=2:L
+        Pk(i)=nu(i)*((v(i+1)-v(i-1))/2/(z(i+1)-z(i)))^2;
+    end
+    Pk(L+1)=nu(L+1)*((v(L+1)-v(L))/(z(L+1)-z(L)))^2;
+    
+        drhobdz(1)=(rhob(2)-rhob(1))/(z(2)-z(1));
+        for i=2:L
+            drhobdz(i)=(rhob(i+1)-rhob(i-1))/(z(i+1)-z(i-1));
+        end
+        drhobdz(L+1)=(rhob(L+1)-rhob(L))/(z(L+1)-z(L));
+        G=max(g./rhob(1:L+1).*nut(1:L+1)/2.*drhobdz(1:L+1)',-1e-5);
+        
+   % Length=kappa*(z(1:L+1)+z0)'.*sqrt((1-z(1:L+1)'/(1.0001*hakt)));
+   % epsilon=cmu^(3/4)*tke.^(3/2)./Length; % Aus Dimensionsanalyse
+    
+    %% Lösung der Impulsgleichung
+    v=(M-theta*D)\(((1-theta)*D)*v + M*(v+dt*g*J));
+    
+    %% Diffusionsmatrix Schwebstoff
+    for i=2:L
+        Dc(i,i)=-((K(i-1)+K(i))*dt/((z(i)-z(i-1))*((z(i+1)-z(i-1))))+(K(i)+K(i+1))*dt/((z(i+1)-z(i))*((z(i+1)-z(i-1)))));
+        Dc(i,i+1)=(K(i)+K(i+1))*dt/((z(i+1)-z(i))*(z(i+1)-z(i-1)));
+        Dc(i,i-1)=((K(i-1)+K(i))*dt/((z(i)-z(i-1))*(z(i+1)-z(i-1))));
+    end
+    
+    Dc(1,1)=-0.5*(K(1)+K(2))*dt/((z(2)-z(1))^2);
+    Dc(1,2)=dt/(z(3)-z(1))*(K(1)+K(2))/(z(2)-z(1));
+    Dc(L+1,L)=0.5*(K(L+1)+K(L))*dt/((z(L+1)-z(L))^2);
+    Dc(L+1,L+1)=-0.5*(K(L+1)+K(L))*dt/((z(L+1)-z(L))^2);
+    
+    %% Konvektionsmatrix Schwebstoff
+    C=zeros(L+1);
+    C(1,1)=0;
+    C(1,2)=dt*wc(2)/(z(2)-z(1));
+    for i=2:L
+        C(i,i)=-dt*wc(i)/(z(i+1)-z(i));
+        C(i,i+1)=dt*wc(i+1)/(z(i+1)-z(i));
+    end
+    C(L+1,L+1)=-dt*wc(L+1)/(z(L+1)-z(L));
+    
+    
+    
+    %% Lösung der Schwebstofftransportgleichung
+    b=(M+(1-theta)*Dc-(1-theta)*C)*c;
+    A=M+theta*C-theta*Dc;
+    c=A\b;
+    
+    %% Lösung der k-Gleichung
+    
+    Dtke=D/sigmak;
+  
+   
+    b=((1-theta)*Dtke)*tke ...
+        + M*(tke+dt*(Pk'+(1-theta)*G'.*tke)-dt*(1-theta)*cmu*tke.*omega);
+    b(1)=kB;
+    
+    A=M-theta*Dtke;
+    
+    % Abspeichern von Inhomogenit�ten auf der Diagonalen
+    for i=1:L+1
+        A(i,i)=A(i,i)-dt*theta*(G(i)-cmu*omega(i));
+    end
+   
+    
+    
+    tke=A\b;
+    
+    %% Lösung der w-Gleichung
+     
+    Dom=D/sigmaom;
+    tkemin=0.001;
+    omegainhomo=(cmn1*Pk'./max(tke,tkemin)-cmn2*omega);
+    b=((1-theta)*Dom)*omega + M*(omega+(1-theta)*dt*omegainhomo.*omega);
+    
+    Dom(1,:)=0;
+    Dom(1,1)=-0.5*(nu(2)+nu(1))*dt/(z(2)-z(1));
+    Dom(2,1)=Dom(2,3); % macht Omega bauchig
+    b(1)=omegaB/100000; %omega war viel zu groß!?
+    
+    % Homogene Dirichlet-RB am der FOF
+    Dom(L+1,:)=0;
+    Dom(L+1,L+1)=-0.5*(nu(L+1)+nu(L))*(z(L+1)-z(L));
+    b(L+1)=omegaS;
+    
+    
+    A=M-theta*Dom;
+    % Abspeichern von Inhomogenitäten auf der Diagonalen
+    for i=1:L+1
+        A(i,i)=A(i,i)-dt*theta*omegainhomo(i);
+    end
+    omega=A\b;
+    
+    nut=1e-06+tke./omega(1:L+1,1);
+%    nut=nut';
+    
+    %% Plots
+    
+    csum=sum(c); 
+    if mod(k,500)==0
+    
+    subplot (4,2,1);    plot(c,z(1:L+1)/h,'LineWidth',2,'Color',[0 0 0]);
+    ylabel('rel. Bodenabstand z/h','FontWeight','bold','FontName','Arial','FontSize',13);
+    xlabel('Konzentration kg/m^3','FontWeight','bold','FontName','Arial','FontSize',13);
+    drawnow;
+    hold off
+    
+    subplot(4,2,2);    plot(v/ustar,z(1:L+1)/h,'LineWidth',2,'Color',[0 0 0]);
+    ylabel('rel. Bodenabstand z/h','FontWeight','bold','FontName','Arial','FontSize',13);
+    xlabel('Geschwindigkeit v/u_*','FontWeight','bold','FontName','Arial','FontSize',13);
+    xlim([-5 5])
+    drawnow;
+    hold off
+    
+    subplot (4,2,3);    plot(tke,z(1:L+1)/h,'LineWidth',2,'Color',[0 0 0]);
+    ylabel('rel. Bodenabstand z/h','FontWeight','bold','FontName','Arial','FontSize',13);
+    xlabel('TKE','FontWeight','bold','FontName','Arial','FontSize',13);
+    drawnow;
+    hold off
+    
+    subplot(4,2,4);    plot(omega, z(1:L+1)/h,'LineWidth',2,'Color',[0 0 0]);
+    ylabel('rel. Bodenabstand z/h','FontWeight','bold','FontName','Arial','FontSize',13);
+    xlabel('Omega','FontWeight','bold','FontName','Arial','FontSize',13);
+    drawnow;
+    hold off
+    
+    subplot(4,2,5);    plot(nut(1:L+1,1), z(1:L+1)/h,'LineWidth',2,'Color',[0 0 0]);
+    ylabel('rel. Bodenabstand z/h','FontWeight','bold','FontName','Arial','FontSize',13);
+    xlabel('Turbulente Viskosität','FontWeight','bold','FontName','Arial','FontSize',13);
+    xlim([1e-6 1e-03])
+    drawnow;
+    hold off
+    
+    subplot(4,2,6);    plot(nur, z(1:L+1)/h,'LineWidth',2,'Color',[0 0 0]);
+    ylabel('rel. Bodenabstand z/h','FontWeight','bold','FontName','Arial','FontSize',13);
+    xlabel('Rheologische Viskosität','FontWeight','bold','FontName','Arial','FontSize',13);
+    drawnow;
+    hold off
+    
+    subplot(4,2,7);    semilogx(nu, z(1:L+1)/h,'LineWidth',2,'Color',[0 0 0]);
+    ylabel('rel. Bodenabstand z/h','FontWeight','bold','FontName','Arial','FontSize',13);
+    xlabel('Effektive Viskosität','FontWeight','bold','FontName','Arial','FontSize',13);
+    drawnow;
+    hold off
+    
+    subplot(4,2,8);    plot(K(1:L+1), z(1:L+1)/h,'LineWidth',2,'Color',[0 0 0]);
+    ylabel('rel. Bodenabstand z/h','FontWeight','bold','FontName','Arial','FontSize',13);
+    xlabel('Diffusivität','FontWeight','bold','FontName','Arial','FontSize',13);
+    drawnow;
+    hold off
+    
+    end
+    
+    %Befüllen einer Matrix Z
+    for j=1:L+1
+        Z(j,k)=abs(v(j,1));
+        Zc(j,k)=c(j,1);
+        Zk(j,k)=tke(j,1);
+        ZQ(j,k)=v(j,i);
+    end
+    
+    for j=L+2:N
+        
+        %Macht obere Bereiche der Z-Matrix weiß
+        Z(j,k)=NaN;
+        Zc(j,k)=NaN;
+        Zk(j,k)=NaN;
+        ZQ(j,k)=0;
+    end
+    
+    
+fprintf('Zeitschritt = %i\t Wasserstand = %.2f m\t Summe c = %.3d\n', k,hakt,csum) % Ausgabe
+    
+end
+
+Q=sum(sum(ZQ(:,1:ceil(NT/3))).*dz)*B; % Oberwasser [m^3/s]
+fprintf('Normalabluss = %.2f m^3/s\n', Q)
+
+%Plot Ort-Zeit der Geschwindigkeiten
+figure
+
+subplot(3,3,[4 6]);
+% Skaliert die Achsen
+[xi yi]=meshgrid(linspace(0,TM2,size(Z,2)),linspace(0,1,size(Z,1)));
+%Eigentlicher Plot der Matrix Z mit Skalierung xi und yi, sowie Anzahl der
+%Farbstufen=100; ohne Kontur
+contourf(xi,yi,Z, 100, 'LineStyle', 'none');
+% Farbschema
+colormap(jet);
+title('Ort-Zeit-Profil der Geschwindigkeit')
+xlabel('t [s]')
+ylabel('rel. Bodenabstand z/h')
+
+%Plot Ort-Zeit der Konzentration
+subplot(3,3,[1 3]);
+% Skaliert die Achsen
+[xc yc]=meshgrid(linspace(0,TM2,size(Zc,2)),linspace(0,1,size(Zc,1)));
+%Eigentlicher Plot der Matrix Z mit Skalierung xi und yi, sowie Anzahl der
+%Farbstufen=100; ohne Kontur
+contourf(xc,yc,Zc,0:10:800, 'Linestyle', 'none');
+% Farbschema
+colormap(jet);
+title('Ort-Zeit-Profil der Konzentration')
+xlabel('t [s]')
+ylabel('rel. Bodenabstand z/h')
+
+%Plot Ort-Zeit der turbulenten kinetischen Energie
+subplot(3,3,[7 9]);
+% Skaliert die Achsen
+[xk yk]=meshgrid(linspace(0,TM2,size(Zk,2)),linspace(0,1,size(Zk,1)));
+%Eigentlicher Plot der Matrix Z mit Skalierung xi und yi, sowie Anzahl der
+%Farbstufen=100; ohne Kontur
+contourf(xk,yk,Zk,100, 'Linestyle', 'none');
+% Farbschema
+colormap(jet);
+title('Ort-Zeit-Profil der turbulenten kinetischen Energie')
+xlabel('t [s]')
+ylabel('rel. Bodenabstand z/h')
+
+figure
+
+Z=Z(:,2500:7200);
+subplot(2,3,[1 3]);
+% Skaliert die Achsen
+[xi yi]=meshgrid(linspace(0,17,size(Z,2)),linspace(0,h,size(Z,1)));
+%Eigentlicher Plot der Matrix Z mit Skalierung xi und yi, sowie Anzahl der
+%Farbstufen=100; ohne Kontur
+contourf(xi,yi,Z,100, 'LineStyle', 'none');
+% Farbschema
+colormap(jet);
+c=colorbar;
+c.Label.String = 'Geschwindigkeit [m/s]';
+title('Ort-Zeit-Profil der Geschwindigkeit')
+xlabel('t [h]')
+ylabel('Höhe h [m]')
+
+Zc=Zc(:,2500:7200);
+%Plot Ort-Zeit der Konzentration
+subplot(2,3,[4 6]);
+% Skaliert die Achsen
+[xc yc]=meshgrid(linspace(0,17,size(Zc,2)),linspace(0,h,size(Zc,1)));
+%Eigentlicher Plot der Matrix Z mit Skalierung xi und yi, sowie Anzahl der
+%Farbstufen=100; ohne Kontur
+contourf(xc,yc,Zc,0:2:200, 'Linestyle', 'none');
+% Farbschema
+colormap(jet);
+c=colorbar;
+c.Label.String = 'Konzentration [g/l]';
+title('Ort-Zeit-Profil der Konzentration')
+xlabel('t [h]')
+ylabel('Höhe h [m]')
+ 
+figure   % Plot was Wasserstand und Neigung
+x = [1:NT];
+y1 = hplot;
+y2 = Jplot;
+plotyy(x,y1,x,y2)
+xlabel('No. of timesteps')
+yyaxis left
+ylabel('Wasserstand [m]')
+yyaxis right
+ylabel('Neigung J [-]')
+
+
+end
